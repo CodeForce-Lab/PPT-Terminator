@@ -1,6 +1,6 @@
 // Copyright (c) 2026 CodeForce-Lab
-// All rights reserved.
-// 未经许可禁止商用、二次分发
+// Licensed under the Apache License, Version 2.0. See LICENSE and NOTICE.
+// 使用、修改或分发时须保留本声明并署名 CodeForce-Lab。
 
 const $ = (id) => document.getElementById(id);
 const layouts = { cover: '封面', section: '章节过渡', content: '正文要点', columns: '分栏内容', metrics: '数据指标', timeline: '时间线', photo: '图片展示', closing: '结束页', reference: '保留参考原页' };
