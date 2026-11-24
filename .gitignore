@@ -1,3 +1,7 @@
+# Copyright (c) 2026 CodeForce-Lab
+# All rights reserved.
+# 未经许可禁止商用、二次分发
+
 # Logs
 logs
 *.log
@@ -155,3 +159,16 @@ vite.config.ts.timestamp-*
 .nx/cache
 .nx/workspace-data
 .nx/migrate-runs
+
+# Local runtime data: uploads, generated decks, settings and encrypted keys
+data/
+
+# Personal deployment scripts (private server details)
+scripts/start-cloud.ps1
+scripts/stop-cloud.ps1
+
+# One-off deck production scripts tied to private client materials
+scripts/build-partner-*.mjs
+scripts/merge-partner-deck.ps1
+scripts/prepare-matched-chapters.mjs
+scripts/inspect-reference.mjs
