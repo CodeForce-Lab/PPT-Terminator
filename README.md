@@ -55,6 +55,10 @@ test/               接口与渲染测试
 npm test
 ```
 
+## 友链
+
+- [LINUX DO](https://linux.do/) — 新的理想型社区
+
 ## 许可与署名
 
 本项目以 [Apache License 2.0](LICENSE) 开源：你可以自由使用、修改、商用和再分发，但必须保留版权声明与 [NOTICE](NOTICE) 文件，并注明出处。
