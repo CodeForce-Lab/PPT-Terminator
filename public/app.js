@@ -15,7 +15,12 @@ const state = {
   images: [], imageIndex: 0, imageInternal: false, toastTimer: null,
   pages: { files: 0, slides: 0, history: 0, metrics: 0, columns: 0 },
   previewIndex: 0, previews: [], reader: null,
+  studio: { jobId: null, source: '', sourceKey: '', deck: null, busy: '', results: [] },
+  imageSettingsBusy: false,
 };
+const imageSettingDefaults = { baseUrl: '', model: 'gpt-image-1', method: 'edits', size: '1536x1024', quality: 'high', allowLocalApi: false, hasApiKey: false, configured: false };
+const studioImagePageLimit = 4;
+const studioImageTimeout = 20 * 60 * 1000;
 const listLayouts = {
   files: { id: 'file-list', row: '--file-row', size: 4 },
   slides: { id: 'slide-list', row: '--slide-row', size: 7 },
@@ -259,6 +264,8 @@ function syncControls() {
   document.querySelectorAll('[data-mutation]').forEach((element) => { element.disabled = locked; });
   ['new-project', 'history-create'].forEach((id) => { $(id).disabled = !state.online || Boolean(state.operation); });
   $('requirements-fields').disabled = locked;
+  $('workflow-fields').disabled = locked;
+  $('workflow-from-delivery').disabled = locked || !state.currentId;
   $('advanced-fields').disabled = locked;
   $('plan-meta-fields').disabled = locked || !state.plan;
   $('slide-fields').disabled = locked || !state.plan?.slides?.length || reference;
@@ -273,7 +280,7 @@ function syncControls() {
   $('file-input').disabled = locked;
   $('folder-input').disabled = locked;
   $('step-2').disabled = !state.plan;
-  $('step-3').disabled = !state.plan && !currentJob()?.outputs && !active;
+  $('step-3').disabled = !state.plan && !currentJob()?.outputs && !currentJob()?.workflow && !active;
   $('analyze').disabled = locked || (selectedMode() === 'ai' && state.settingsBusy);
   $('generate').disabled = locked || !state.plan || rebuild;
   $('save-plan').disabled = locked || !state.plan;
@@ -294,6 +301,9 @@ function syncControls() {
   $('clear-api-key').disabled = !state.settings.hasApiKey || state.settingsBusy || !state.online;
   $('api-key').disabled = state.settingsBusy || !state.online || $('clear-api-key').checked;
   $('close-settings').disabled = state.settingsBusy;
+  $('nav-image-settings').disabled = state.imageSettingsBusy;
+  syncStudio();
+  syncImageSettings();
   updateSaveState();
 }
 function updateSaveState() {
@@ -418,17 +428,20 @@ function bytesLabel(size = 0) {
   return size >= 1024 * 1024 ? `${(size / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(size / 1024)} KB`;
 }
 function setView(view) {
+  if (state.view !== view) window.scrollTo(0, 0);
   state.view = view;
   $('workspace-view').hidden = view !== 'workspace';
   $('history-view').hidden = view !== 'history';
-  $('view-label').textContent = view === 'history' ? '项目历史' : '创作工作台';
-  ['workspace', 'history'].forEach((name) => {
+  $('studio-view').hidden = view !== 'studio';
+  $('view-label').textContent = { history: '项目历史', studio: '演示工坊' }[view] || '创作工作台';
+  ['workspace', 'history', 'studio'].forEach((name) => {
     const element = $(`nav-${name}`);
     element.classList.toggle('active', view === name);
     if (view === name) element.setAttribute('aria-current', 'page');
     else element.removeAttribute('aria-current');
   });
   if (view === 'history') renderHistory();
+  if (view === 'studio') syncStudio();
 }
 function showStep(step, validate = true) {
   if (state.operation && validate) return false;
@@ -464,6 +477,7 @@ function hydrateJob(job) {
   state.selectedSlide = 0;
   state.editorMode = 'form';
   setMaterialsPane('requirements');
+  $('workflow-form').reset();
   state.requirementsDirty = false;
   state.planDirty = false;
   fillRequirements(job.requirements || defaults);
@@ -598,6 +612,63 @@ async function analyze() {
       await refreshCurrent().catch(() => {});
       throw error;
     }
+  });
+}
+function openWorkflow(followUp = false) {
+  const dialog = $('workflow-dialog');
+  dialog.dataset.followUp = String(followUp);
+  $('workflow-title').textContent = followUp ? '用一句话继续调整' : '一句话制作 PPT';
+  const instruction = $('workflow-instruction');
+  instruction.placeholder = followUp ? '例如：只重绘第5页' : '例如：根据已上传的素材做一份季度汇报 PPT，再导出逐步放映版';
+  instruction.setCustomValidity('');
+  $('workflow-text-consent').checked = false;
+  $('workflow-image-consent').checked = false;
+  $('workflow-form-error').hidden = true;
+  $('workflow-help').textContent = followUp ? '指令会应用到当前项目已保存的文稿。重绘时请勾选作图授权。' : '可在同一句话中指定主题、页数、放映动画或要重绘的页面。';
+  if (followUp && dirty()) $('workflow-help').textContent += '当前未保存的编辑不会应用到本次任务。';
+  dialog.showModal();
+  instruction.focus();
+}
+async function submitWorkflow() {
+  if ($('workflow-submit').disabled || !$('workflow-text-consent').checked) return;
+  const instruction = $('workflow-instruction');
+  const text = instruction.value.trim();
+  if (!text) {
+    instruction.setCustomValidity('请输入一句话指令。');
+    instruction.reportValidity();
+    return;
+  }
+  const dialog = $('workflow-dialog');
+  const followUp = dialog.dataset.followUp === 'true';
+  const body = { instruction: text, textConsent: true, imageConsent: $('workflow-image-consent').checked };
+  const feedback = $('workflow-form-error');
+  feedback.hidden = true;
+  await mutate('正在提交一句话工作流', async () => {
+    let job;
+    try {
+      // PUT clears generated outputs. A follow-up must use the saved deck as-is.
+      if (!currentJob() || (!followUp && dirty())) await saveCurrent();
+      const previous = currentJob();
+      try {
+        job = await api(`${jobPath(previous.id)}/workflow`, { method: 'POST', body });
+        if (job.id !== previous.id || !job.workflow) throw new Error('服务未确认一句话任务，请刷新项目状态。');
+      } catch (error) {
+        if (error.httpStatus && error.httpStatus < 500 && error.httpStatus !== 409) throw error;
+        const fresh = await api(jobPath(previous.id)).catch(() => null);
+        if (!fresh?.workflow || fresh.updatedAt === previous.updatedAt) throw error;
+        job = fresh;
+      }
+    } catch (error) {
+      $('workflow-text-consent').checked = false;
+      $('workflow-image-consent').checked = false;
+      if (!dialog.open) throw error;
+      feedback.textContent = error.message;
+      feedback.hidden = false;
+      return;
+    }
+    dialog.close();
+    $('workflow-form').reset();
+    receiveJob(job, true);
   });
 }
 async function generate() {
@@ -1074,32 +1145,60 @@ async function deleteSlide() {
   alignOutlineCount(); renderOutline();
 }
 
+function taskError(job) {
+  return (job?.workflow?.status === 'failed' && job.workflow.error) || job?.error;
+}
 function renderProgress() {
   const job = currentJob();
   const active = processing(job);
   $('task-progress').hidden = !active && job?.status !== 'error';
   $('task-progress').classList.toggle('has-error', job?.status === 'error');
   $('progress-symbol').hidden = !active;
-  $('progress-title').textContent = job?.status === 'analyzing' ? '正在整理素材与提纲' : job?.status === 'generating' ? '正在制作演示文稿' : '任务需要处理';
+  const workflow = job?.workflow;
+  $('progress-title').textContent = workflow?.status === 'running' ? '正在执行一句话工作流' : job?.status === 'analyzing' ? '正在整理素材与提纲' : job?.status === 'generating' ? '正在制作演示文稿' : '任务需要处理';
   const progress = Math.max(0, Math.min(100, Number(job?.progress) || 0));
   $('progress-percent').textContent = `${Math.round(progress)}%`;
   $('progress-bar').value = progress;
   const pollWarning = state.pollFailures.get(state.currentId);
-  const stage = pollWarning || job?.stage || (active ? '等待本机服务更新进度' : '请检查错误后重试');
+  const workflowStage = workflow?.status === 'running' || workflow?.status === 'failed' && job?.status === 'error' ? workflow.stage : '';
+  const stage = pollWarning || workflowStage || job?.stage || (active ? '等待本机服务更新进度' : '请检查错误后重试');
   $('progress-stage').textContent = stage;
   $('progress-stage').title = stage;
-  $('read-task-error').hidden = !job?.error;
+  $('read-task-error').hidden = !taskError(job);
   $('retry-poll').hidden = !pollWarning;
   const warnings = Array.isArray(job?.warnings) ? job.warnings : [];
   $('job-warnings').hidden = !warnings.length;
   $('job-warnings').textContent = `提示（${warnings.length}）`;
   syncControls();
 }
-function receiveJob(job) {
+function receiveJob(job, workflowSubmitted = false) {
   const previous = state.jobs.get(job.id);
   if (previous?.status === 'analyzing' && job.status === 'planned' && planMatchesRequirements(job.plan, job.requirements || defaults)) state.invalidatedPlans.delete(job.id);
   rememberJob(job);
   if (job.id !== state.currentId) return;
+  const workflowStatus = job.workflow?.status;
+  const workflowFinished = job.status === 'ready' && ['complete', 'partial'].includes(workflowStatus)
+    && (workflowSubmitted || previous?.workflow?.status === 'running');
+  if (workflowFinished) {
+    if (!dirty()) {
+      state.invalidatedPlans.delete(job.id);
+      state.plan = planMatchesRequirements(job.plan, job.requirements || defaults) ? clone(job.plan) : null;
+      state.selectedSlide = 0;
+      fillRequirements(job.requirements || defaults);
+      $('plan-title').value = state.plan?.title || '';
+      $('plan-subtitle').value = state.plan?.subtitle || '';
+    }
+    state.previewIndex = 0;
+    showStep(3, false);
+    renderProgress();
+    toast(workflowStatus === 'partial' ? '部分成果已生成，可在第三步查看' : '一句话工作流已完成，可下载成果');
+    return;
+  }
+  if (workflowStatus === 'running') {
+    renderProgress();
+    if (state.step === 3) renderDelivery();
+    return;
+  }
   // A server-side file reset is authoritative even when the old outline was dirty.
   // Keep the brief fields untouched; only remove an unavailable reference selection.
   if (job.plan == null && state.plan && !processing(job)) {
@@ -1162,21 +1261,51 @@ async function pollJobs() {
     }));
   } finally { state.polling = false; renderProgress(); schedulePoll(); }
 }
+function renderWorkflowResult(workflow) {
+  const labels = { complete: '一句话工作流已完成', partial: '一句话工作流部分完成', failed: '一句话工作流未完成' };
+  const status = workflow?.status;
+  const title = labels[status];
+  $('workflow-result').hidden = !title;
+  $('workflow-result-title').textContent = title || '';
+  const detail = [];
+  if (status === 'partial' || status === 'failed') {
+    detail.push(`最近一次指令：${workflow.error || '有步骤未完成，请查看任务状态。'}`);
+  }
+  const links = [];
+  for (const [result, label] of [[workflow?.show, '下载逐步放映版'], [workflow?.remix, '下载 AI 视觉重制版']]) {
+    const url = sameOriginUrl(result?.url);
+    if (!title || !url) continue;
+    const link = node('a', 'button button-outline');
+    link.href = url;
+    link.download = '';
+    link.append(icon('download'), document.createTextNode(label));
+    links.push(link);
+  }
+  if (title && sameOriginUrl(workflow.remix?.url) && Array.isArray(workflow.remix.pages) && workflow.remix.pages.length) {
+    const version = status === 'partial' ? '已保留的重绘版' : '本次重绘版';
+    detail.push(`${version}包含第 ${workflow.remix.pages.join('、')} 页的重绘。请核对页面中的文字和数字。`);
+  }
+  $('workflow-result-detail').textContent = detail.join(' ');
+  $('workflow-downloads').replaceChildren(...links);
+  return links.length > 0;
+}
 function renderDelivery() {
   const job = currentJob();
+  const hasWorkflowDownloads = renderWorkflowResult(job?.workflow);
   const outputs = job?.status === 'ready' ? job.outputs : null;
   const pptxUrl = sameOriginUrl(outputs?.pptxUrl);
   const available = Boolean(pptxUrl);
-  $('delivery-empty').hidden = available;
+  $('delivery-empty').hidden = available || hasWorkflowDownloads;
   $('delivery-result').hidden = !available;
   $('delivery-empty-title').textContent = job?.status === 'generating' ? '正在生成，请稍候' : job?.status === 'error' ? '本次生成未完成' : '还没有生成文件';
   $('delivery-empty-description').textContent = job?.status === 'generating' ? '生成完成后会在这里显示预览。' : job?.status === 'error' ? '请查看错误详情，修正后可重新生成。' : '核对提纲并点击「生成 PPTX」后，即可预览和下载。';
   $('delivery-back-outline').hidden = !state.plan;
+  $('edit-again').hidden = !state.plan;
   if (!available) { state.previews = []; state.previewIndex = 0; return; }
   const download = node('a', 'button button-dark');
   download.href = pptxUrl;
   download.download = `${(job.title || '演示文稿').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')}.pptx`;
-  download.append(icon('download'), document.createTextNode('下载 PPTX'));
+  download.append(icon('download'), document.createTextNode(job.workflow ? '下载可编辑 PPTX' : '下载 PPTX'));
   $('download-links').replaceChildren(download);
   $('delivery-summary').textContent = `${job.plan?.slides?.length || 0} 页 · 可在 PowerPoint 中继续编辑`;
   state.previews = (outputs.slides || []).map((slide) => ({ number: slide.number, url: sameOriginUrl(slide.url), name: `第 ${slide.number} 页` })).filter((slide) => slide.url && /\.png$/i.test(new URL(slide.url).pathname));
@@ -1235,6 +1364,223 @@ function moveImage(direction) {
   state.imageIndex = next; renderImageDialog();
 }
 
+function studioSources(job = currentJob()) {
+  const refs = (job?.files || []).filter((file) => file.kind === 'reference');
+  const output = job?.status === 'ready' && sameOriginUrl(job.outputs?.pptxUrl);
+  return [
+    ...(output ? [{ id: 'output', key: `output:${job.updatedAt}`, label: '已生成的成稿' }] : []),
+    ...refs.map((file) => ({ id: file.id, key: file.id, label: `参考稿：${file.relativePath || file.name}` })),
+  ];
+}
+function studioFeedback(message, type = '') {
+  const element = $('studio-status');
+  element.className = `studio-feedback ${type}`;
+  element.textContent = message;
+  element.hidden = !message;
+}
+function resetStudioDeck() {
+  state.studio.deck = null;
+  $('studio-consent').checked = false;
+  $('studio-instructions').value = '';
+  $('studio-pages').replaceChildren();
+  studioFeedback('');
+}
+function syncStudio(preferred) {
+  const job = currentJob();
+  const studio = state.studio;
+  const sources = studioSources(job);
+  $('studio-from-materials').hidden = !sources.some((source) => source.id !== 'output');
+  if (state.view !== 'studio') return;
+  const sameJob = job?.id === studio.jobId;
+  const source = sources.find((entry) => entry.id === preferred) || (sameJob && sources.find((entry) => entry.id === studio.source)) || sources[0];
+  const optionsKey = JSON.stringify(sources);
+  if ($('studio-source').dataset.optionsKey !== optionsKey) {
+    $('studio-source').dataset.optionsKey = optionsKey;
+    $('studio-source').replaceChildren(...(sources.length ? sources.map((entry) => new Option(entry.label, entry.id)) : [new Option('没有可用的 PPTX', '')]));
+  }
+  if (!sameJob || (source?.key || '') !== studio.sourceKey) resetStudioDeck();
+  studio.jobId = job?.id;
+  studio.source = source?.id || '';
+  studio.sourceKey = source?.key || '';
+  $('studio-source').value = studio.source;
+  const referencePicker = $('studio-reference');
+  const references = (job?.files || []).filter(file => file.kind === 'image').map(file => [file.id, file.relativePath || file.name]);
+  const referenceKey = JSON.stringify(references);
+  if (referencePicker.dataset.options !== referenceKey) {
+    const previous = referencePicker.value;
+    referencePicker.dataset.options = referenceKey;
+    referencePicker.replaceChildren(new Option('使用重制页的页面图', ''), ...references.map(([id, name]) => new Option(name, id)));
+    referencePicker.value = references.some(([id]) => id === previous) ? previous : '';
+  }
+  const locked = !state.online || Boolean(studio.busy || state.operation) || processing(job);
+  $('studio-project').textContent = job ? `当前项目：${job.title || '未命名'}` : '尚未选择项目';
+  $('studio-go-materials').hidden = Boolean(sources.length);
+  $('studio-source-help').textContent = !state.online ? '请先连接本机服务。' : processing(job) ? '当前项目正在处理，请等待任务完成。' : !sources.length ? '在当前项目上传参考 PPTX，或从项目历史打开一个已有文稿的项目。' : '点击「读取页面」在本机检查页码和标题；不会调用作图接口。';
+  $('studio-source').disabled = locked || !sources.length;
+  $('studio-load').disabled = locked || !source;
+  $('studio-load').textContent = studio.busy === 'deck' ? '正在读取…' : studio.deck ? '重新读取页面' : '读取页面';
+  $('studio-controls').hidden = !studio.deck;
+  $('studio-inputs').disabled = locked;
+  $('studio-image-settings').disabled = state.imageSettingsBusy || studio.busy === 'remix';
+  syncStudioSelection();
+  renderStudioResults();
+}
+function openStudio(preferred) {
+  setView('studio');
+  syncStudio(preferred);
+  $('studio-title').focus();
+}
+function studioSelection(kind) {
+  return [...$('studio-pages').querySelectorAll(`input[data-selection="${kind}"]:checked`)].map((input) => Number(input.value));
+}
+const studioPrompts = [
+  ['发布会封面', '沿用参考图的品牌色和光影。把主视觉集中在右侧，左侧保留干净的标题区；原标题及副标题不改字。只设一个视觉焦点，不加标语、水印或装饰性文字。'],
+  ['经营数据汇报', '用一个大数字突出本页结论，其余指标按同一网格对齐。用字号区分数字、单位、口径与说明；原有数据、单位、时间区间和比较基准一字不改，不新增指标。'],
+  ['流程与方案', '用清晰的阅读方向组织原有流程。等距呈现阶段，仅用连线表示原文已有关系；突出当前阶段，不增加节点或改写先后顺序。'],
+  ['案例照片图文页', '让主体照片成为第一视觉焦点，正文放在对侧安静区域。沿用参考图的色温和裁切语言，但保留原有案例事实，不把参考图中的机构、商标或文案带进成稿。'],
+  ['同风格精修', '保持原稿品牌色、标题位置和阅读方向，只调整对齐、留白、字号层级和视觉焦点。保留原文字句与数据口径，不加阴影堆叠、无意义图标或渐变边框。'],
+];
+const studioPromptKey = 'ppt-studio:prompt-favorites:v1';
+function studioFavorites() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(studioPromptKey) || '[]');
+    return Array.isArray(rows) ? rows.filter(row => Array.isArray(row) && row.length === 2 && typeof row[0] === 'string' && typeof row[1] === 'string').slice(0, 40) : [];
+  } catch { return []; }
+}
+function renderStudioPrompts() {
+  const picker = $('studio-prompt-template');
+  const favorites = studioFavorites();
+  const group = (label, rows, prefix) => {
+    const el = document.createElement('optgroup'); el.label = label;
+    el.append(...rows.map(([name], index) => new Option(name, prefix + index)));
+    return el;
+  };
+  picker.replaceChildren(new Option('请选择提示词', ''), group('内置模板', studioPrompts, 't'), ...(favorites.length ? [group('我的收藏', favorites, 'f')] : []));
+}
+function syncStudioSelection() {
+  const studio = state.studio;
+  const config = state.settings.image || imageSettingDefaults;
+  const remix = $('studio-mode').value === 'remix';
+  const configKey = JSON.stringify(config);
+  if ($('studio-consent').dataset.config !== configKey) {
+    $('studio-consent').dataset.config = configKey;
+    $('studio-consent').checked = false;
+  }
+  $('studio-show-options').hidden = remix;
+  $('studio-remix-options').hidden = !remix;
+  $('studio-consent-label').hidden = !remix;
+  $('studio-consent').disabled = !config.configured;
+  $('studio-reference-field').hidden = config.method !== 'edits';
+  $('studio-page-legend').textContent = remix ? '选择重制页和风格参考页' : '选择不添加动画的页面（可选）';
+  $('studio-endpoint').textContent = !config.configured ? '尚未配置作图接口。请先打开「作图设置」。' : `本次会向 ${config.baseUrl}/images/${config.method} 发送所选重制页文字、风格页标题、文稿配色/字体等摘要和补充要求${config.method === 'edits' ? ($('studio-reference').value ? '，以及所选项目参考图和其他风格参考页图片' : '，以及所选页面的图片') : '；文生图模式不会发送页面图片'}。`;
+  const pages = studioSelection('pages');
+  const styles = studioSelection('stylePages');
+  const excluded = studioSelection('excluded');
+  for (const [kind, selected] of [['pages', pages], ['stylePages', styles]]) {
+    for (const input of $('studio-pages').querySelectorAll(`input[data-selection="${kind}"]`)) {
+      input.disabled = !input.checked && selected.length >= studioImagePageLimit;
+    }
+  }
+  $('studio-selection').textContent = remix ? `已选 ${pages.length}/4 页重制（至少 1 页），${styles.length}/4 页作为风格参考。` : `已排除 ${excluded.length} 页。未排除的适合页面将新增动画。`;
+  $('studio-export').disabled = !studio.deck?.pages.length || $('studio-inputs').disabled || (remix ? !config.configured || !pages.length || !$('studio-consent').checked || state.imageSettingsBusy : !studio.deck.pages.some((page) => !page.hidden && !excluded.includes(page.number)));
+  $('studio-export').textContent = studio.busy === 'remix' ? '正在重制…' : studio.busy === 'show' ? '正在导出…' : remix ? '开始 AI 重制' : '导出逐步放映版';
+}
+function renderStudioPages() {
+  const remix = $('studio-mode').value === 'remix';
+  $('studio-pages').replaceChildren(...(state.studio.deck?.pages || []).map((page) => {
+    const row = node('li', 'studio-page');
+    const title = `第 ${page.number} 页：${page.title || '未命名'}`;
+    const header = node('strong', '', title);
+    header.title = title;
+    row.append(header);
+    if (page.hidden) row.append(node('span', 'small-tag', '隐藏页 · 保持原样'));
+    else for (const [kind, label] of remix ? [['pages', '重制'], ['stylePages', '风格参考']] : [['excluded', '不加动画']]) {
+      const wrapper = node('label', 'checkbox-label');
+      const input = node('input');
+      input.type = 'checkbox'; input.dataset.selection = kind; input.value = page.number;
+      input.setAttribute('aria-label', `${label}：${title}`);
+      wrapper.append(input, document.createTextNode(label));
+      row.append(wrapper);
+    }
+    return row;
+  }));
+  syncStudioSelection();
+}
+async function loadStudioDeck() {
+  if ($('studio-load').disabled) return;
+  const studio = state.studio;
+  const { jobId, source, sourceKey } = studio;
+  resetStudioDeck();
+  studio.busy = 'deck';
+  syncStudio();
+  studioFeedback('正在本机读取文稿页面…');
+  try {
+    const result = await api(`${jobPath(jobId)}/studio/deck?${new URLSearchParams({ source })}`);
+    if (currentJob()?.id !== jobId || !studioSources().some((entry) => entry.key === sourceKey)) return;
+    if (!Array.isArray(result.pages) || !result.pages.length || result.pages.some((page) => !Number.isInteger(page?.number))) throw new Error('该文稿没有可读取的页面。');
+    studio.deck = result;
+    renderStudioPages();
+    studioFeedback(`已读取 ${result.pages.length} 页，请选择要制作的版本。`, 'success');
+  } catch (error) { if (currentJob()?.id === jobId) studioFeedback(error.message, 'error'); }
+  finally { studio.busy = ''; syncStudio(); }
+}
+function studioShowSummary(audit) {
+  if (!audit) return '请在 PowerPoint 的放映模式中检查动画。';
+  const animated = Array.isArray(audit.animatedPages) ? audit.animatedPages : [];
+  return `${animated.length} 页新增动画 · 共 ${audit.clickGroups || 0} 个点击组 · 请在 PowerPoint 放映模式下核对。`;
+}
+function renderStudioResults() {
+  const results = state.studio.results.filter((entry) => entry.jobId === state.studio.jobId);
+  $('studio-results').hidden = !results.length;
+  const key = results.map((entry) => entry.url).join(' ');
+  if ($('studio-downloads').dataset.key === key) return;
+  $('studio-downloads').dataset.key = key;
+  $('studio-downloads').replaceChildren(...results.map(({ url, kind, label, audit, pages }) => {
+    const row = node('li', 'studio-result');
+    const download = node('a', 'button button-outline button-small');
+    const remix = kind === 'remix';
+    download.href = url; download.download = '';
+    download.append(icon('download'), document.createTextNode(remix ? '下载 AI 视觉重制版' : '下载逐步放映版'));
+    const info = node('div', 'studio-result-info');
+    info.append(node('strong', '', label), node('p', 'field-help', remix ? `重制页：${pages.join('、')} · 这些页是整页图片，请核对文字和数字。` : studioShowSummary(audit)));
+    row.append(info, download);
+    if (audit) {
+      row.append(button('动画详情', 'text-button', () => {
+        const reasons = { excluded: '手动排除', hidden: '隐藏页', 'existing-timing': '已有动画', 'auto-advance': '自动换页', static: '无适合新增动画的对象' };
+        const groups = (audit.groups || []).map(({ page, steps }) => `第 ${page} 页：${steps} 个点击组`);
+        const skipped = (audit.skipped || []).map(({ page, reason }) => `第 ${page} 页：${reasons[reason] || reason}`);
+        openReader('动画详情', [studioShowSummary(audit), ...groups, ...(skipped.length ? ['\n保持原样的页面：', ...skipped] : [])].join('\n'));
+      }));
+    }
+    return row;
+  }));
+}
+async function exportStudioDeck() {
+  if ($('studio-export').disabled) return;
+  const studio = state.studio;
+  const { source, jobId } = studio;
+  const label = studioSources().find((entry) => entry.id === source)?.label || '源文稿';
+  const kind = $('studio-mode').value;
+  const remix = kind === 'remix';
+  const body = remix
+    ? { source, pages: studioSelection('pages'), stylePages: studioSelection('stylePages'), instructions: $('studio-instructions').value.trim(), ...(state.settings.image.method === 'edits' && $('studio-reference').value ? { referenceImageId: $('studio-reference').value } : {}), consent: true }
+    : { source, style: $('studio-style').value, pace: $('studio-pace').value, excluded: studioSelection('excluded') };
+  $('studio-consent').checked = false;
+  studio.busy = kind;
+  try {
+    await mutate(remix ? '正在重制页面' : '正在导出逐步放映版', async () => {
+      studioFeedback(remix ? '正在重制页面。此操作可能需要几分钟，请保持页面打开，不要重复提交。' : '正在本机导出逐步放映版…');
+      const result = await api(`${jobPath(jobId)}/studio/${kind}`, { method: 'POST', body, timeout: remix ? studioImageTimeout : 60000 });
+      const url = sameOriginUrl(result.url);
+      if (!url) throw new Error('本机服务未返回有效的下载地址。');
+      studio.results.unshift({ jobId, url, kind, label, audit: remix ? null : result.audit, pages: remix ? result.pages || body.pages : [] });
+      studioFeedback('已生成新文件；原稿未被覆盖。请在下方下载。', 'success');
+      if (state.view !== 'studio') toast('演示工坊的导出成果已就绪');
+    });
+  } catch (error) { studioFeedback(error.message, 'error'); }
+  finally { studio.busy = ''; syncStudio(); }
+}
+
 function settingsFeedback(message, type = '') {
   $('settings-feedback-text').textContent = message;
   $('settings-feedback').className = `settings-feedback${type ? ` ${type}` : ''}`;
@@ -1243,7 +1589,12 @@ function settingsFeedback(message, type = '') {
 }
 function publicSettings(settings) {
   // Deliberately whitelist public fields: never retain an API key from a response.
-  return { baseUrl: settings.baseUrl || '', model: settings.model || '', hasApiKey: Boolean(settings.hasApiKey), allowLocalApi: Boolean(settings.allowLocalApi) };
+  const image = { ...imageSettingDefaults };
+  for (const [key, fallback] of Object.entries(imageSettingDefaults)) {
+    const value = settings.image?.[key];
+    if (typeof value === typeof fallback) image[key] = value;
+  }
+  return { baseUrl: settings.baseUrl || '', model: settings.model || '', hasApiKey: Boolean(settings.hasApiKey), allowLocalApi: Boolean(settings.allowLocalApi), image };
 }
 function fillSettings() {
   $('api-base-url').value = state.settings.baseUrl || '';
@@ -1317,6 +1668,94 @@ async function testSettings() {
   } catch (error) { settingsFeedback(error.message, 'error'); }
   finally { state.settingsBusy = false; syncControls(); }
 }
+function imageSettingsFeedback(message, type = '') {
+  const element = $('image-settings-feedback');
+  element.className = `studio-feedback ${type}`;
+  element.textContent = message;
+  element.hidden = !message;
+}
+const imageFields = { baseUrl: 'image-base-url', model: 'image-model', method: 'image-method', size: 'image-size', quality: 'image-quality' };
+function syncImageSettings() {
+  const locked = !state.online || state.imageSettingsBusy || state.studio.busy === 'remix';
+  $('image-settings-fields').disabled = locked;
+  $('save-image-settings').disabled = locked;
+  $('test-image-api').disabled = locked || !state.settings.image?.configured;
+  $('image-clear-key').disabled = !state.settings.image?.hasApiKey;
+  $('image-api-key').disabled = $('image-clear-key').checked;
+  $('close-image-settings').disabled = state.imageSettingsBusy;
+}
+function fillImageSettings() {
+  const config = state.settings.image || imageSettingDefaults;
+  for (const [key, id] of Object.entries(imageFields)) $(id).value = config[key];
+  const model = $('image-model');
+  const outsideList = Boolean(config.model && !model.value);
+  if (outsideList) model.value = '';
+  const current = $('image-model-current');
+  current.hidden = !outsideList || !(config.baseUrl || config.hasApiKey);
+  current.textContent = current.hidden ? '' : `当前保存的模型：${config.model}（不在新列表中）。选择新模型并保存前，工坊继续使用原配置。`;
+  $('image-allow-local').checked = config.allowLocalApi;
+  $('image-clear-key').checked = false;
+  $('image-api-key').value = '';
+  $('image-key-state').textContent = config.hasApiKey ? '已加密保存在本机' : '未保存密钥';
+  syncImageSettings();
+}
+function openImageSettings() {
+  if (state.imageSettingsBusy || $('image-settings-dialog').open) return;
+  fillImageSettings();
+  imageSettingsFeedback(state.online ? '' : '请先启动并连接本机服务。');
+  $('image-settings-dialog').showModal();
+}
+function closeImageSettings() {
+  if (state.imageSettingsBusy) return;
+  $('image-api-key').value = '';
+  $('image-settings-dialog').close();
+}
+function imageSettingsBody() {
+  return { ...Object.fromEntries(Object.entries(imageFields).map(([key, id]) => [key, $(id).value.trim()])), allowLocalApi: $('image-allow-local').checked };
+}
+async function saveImageSettings(event) {
+  event.preventDefault();
+  if ($('save-image-settings').disabled) return;
+  const body = imageSettingsBody();
+  const clear = $('image-clear-key').checked;
+  if (body.baseUrl) {
+    let url;
+    try { url = new URL(body.baseUrl); } catch { imageSettingsFeedback('请填写有效的作图 API 地址。', 'error'); return; }
+    if (url.username || url.password || url.search || url.hash || !['https:', 'http:'].includes(url.protocol)) { imageSettingsFeedback('作图 API 地址只支持 HTTP / HTTPS，不能含凭据、查询参数或片段。', 'error'); return; }
+    if (url.protocol === 'http:' && !body.allowLocalApi) { imageSettingsFeedback('使用 HTTP 地址前请允许受信任的本地 HTTP API。', 'error'); return; }
+  }
+  if (clear) body.clearApiKey = true;
+  else if ($('image-api-key').value) body.apiKey = $('image-api-key').value;
+  $('studio-consent').checked = false;
+  state.imageSettingsBusy = true; syncControls();
+  try {
+    const result = await api('/api/settings/image', { method: 'PUT', body });
+    if (!result.image) throw new Error('本机服务未返回作图设置。');
+    state.settings.image = publicSettings(result).image;
+    fillImageSettings();
+    imageSettingsFeedback(clear ? '已移除本机保存的作图密钥。' : '作图设置已保存到本机；未发起连接测试。', 'success');
+  } catch (error) { imageSettingsFeedback(error.message, 'error'); }
+  finally { delete body.apiKey; $('image-api-key').value = ''; state.imageSettingsBusy = false; syncControls(); }
+}
+async function testImageSettings() {
+  if ($('test-image-api').disabled) return;
+  const config = state.settings.image;
+  const draft = imageSettingsBody();
+  // A blank selector can represent a saved legacy model, not a pending edit.
+  if (!draft.model) draft.model = config.model;
+  if ($('image-api-key').value || $('image-clear-key').checked || Object.entries(draft).some(([key, value]) => value !== config[key])) {
+    imageSettingsFeedback('测试只使用已保存的配置，请先保存或重新打开此设置。', 'error'); return;
+  }
+  if (!await confirmAction('发起真实作图测试？', `本机服务将向 ${config.baseUrl}/images/${config.method} 发送测试请求，可能计费。不发送项目素材。`, '同意并测试')) return;
+  state.imageSettingsBusy = true; syncControls();
+  imageSettingsFeedback('正在测试作图接口，请稍候…');
+  try {
+    const result = await api('/api/settings/image/test', { method: 'POST', body: { consent: true }, timeout: 210000 });
+    if (result.ok !== true) throw new Error(result.error || result.message || '本机服务未确认收到有效图片。');
+    imageSettingsFeedback(result.message || '已收到并验证作图接口返回的图片。', 'success');
+  } catch (error) { imageSettingsFeedback(error.message, 'error'); }
+  finally { state.imageSettingsBusy = false; syncControls(); }
+}
 async function bootstrap() {
   if (state.bootstrapBusy) return;
   state.bootstrapBusy = true;
@@ -1359,17 +1798,79 @@ onClick('brand-home', () => setView('workspace'));
 onClick('nav-workspace', () => setView('workspace'));
 onClick('nav-history', async () => { setView('history'); if (state.online) await refreshHistory(); });
 ['nav-settings', 'configure-ai'].forEach((id) => onClick(id, openSettings));
+onClick('nav-studio', () => openStudio());
+onClick('studio-from-materials', () => openStudio(studioSources().find((source) => source.id !== 'output')?.id));
+onClick('studio-from-output', () => openStudio('output'));
+onClick('studio-go-materials', () => { setView('workspace'); if (showStep(1)) setMaterialsPane('materials'); });
+onClick('studio-load', loadStudioDeck);
+onClick('studio-export', exportStudioDeck);
+$('studio-source').addEventListener('change', () => syncStudio($('studio-source').value));
+$('studio-mode').addEventListener('change', () => { $('studio-consent').checked = false; renderStudioPages(); });
+$('studio-pages').addEventListener('change', () => { $('studio-consent').checked = false; syncStudioSelection(); });
+$('studio-instructions').addEventListener('input', () => { $('studio-consent').checked = false; syncStudioSelection(); });
+$('studio-consent').addEventListener('change', syncStudioSelection);
+$('studio-reference').addEventListener('change', () => { $('studio-consent').checked = false; syncStudioSelection(); });
+renderStudioPrompts();
+onClick('studio-prompt-apply', () => {
+  const selected = $('studio-prompt-template').value;
+  const row = (selected.startsWith('f') ? studioFavorites() : studioPrompts)[Number(selected.slice(1))];
+  if (!selected || !row) return;
+  const box = $('studio-instructions');
+  if (box.value.trim() && box.value !== row[1] && !window.confirm('用所选提示词替换编辑框里的内容？')) return;
+  box.value = row[1];
+  box.dispatchEvent(new Event('input'));
+  box.focus();
+});
+onClick('studio-prompt-save', () => {
+  const name = $('studio-prompt-name').value.trim();
+  const text = $('studio-instructions').value.trim();
+  const status = $('studio-prompt-status');
+  if (!name || !text) { status.textContent = '请填写收藏名称和提示词。'; return; }
+  const rows = studioFavorites();
+  const index = rows.findIndex(row => row[0] === name);
+  if (index >= 0 && !window.confirm('覆盖这个同名收藏？')) return;
+  if (index < 0 && rows.length >= 40) { status.textContent = '收藏已满 40 条，可覆盖同名收藏。'; return; }
+  if (index >= 0) rows[index] = [name, text]; else rows.unshift([name, text]);
+  try {
+    localStorage.setItem(studioPromptKey, JSON.stringify(rows));
+    renderStudioPrompts();
+    $('studio-prompt-template').value = `f${Math.max(0, index)}`;
+    status.textContent = '已收藏，下次可在此浏览器套用。';
+  } catch { status.textContent = '浏览器不允许保存收藏。'; }
+});
+['studio-image-settings', 'nav-image-settings'].forEach((id) => onClick(id, openImageSettings));
+onClick('close-image-settings', closeImageSettings);
+$('image-settings-dialog').addEventListener('cancel', (event) => { event.preventDefault(); closeImageSettings(); });
+$('image-settings-dialog').addEventListener('close', () => { $('image-api-key').value = ''; });
+$('image-settings-form').addEventListener('submit', (event) => run(() => saveImageSettings(event)));
+$('image-settings-form').addEventListener('input', () => {
+  if ($('image-clear-key').checked) $('image-api-key').value = '';
+  syncImageSettings();
+  imageSettingsFeedback('有未保存的设置；测试只使用已保存的配置。');
+});
+onClick('test-image-api', testImageSettings);
 onClick('retry-bootstrap', bootstrap);
 onClick('dismiss-alert', () => { $('global-alert').hidden = true; });
 onClick('read-alert', () => openReader('操作提示', $('global-alert-text').textContent));
 onClick('job-warnings', () => openReader('素材与生成提示', currentJob().warnings.map((message, index) => `${index + 1}. ${message}`).join('\n\n')));
-onClick('read-task-error', () => openReader('任务错误', currentJob().error));
+onClick('read-task-error', () => openReader('任务错误', taskError(currentJob())));
 onClick('refresh-history', refreshHistory);
 function filterHistory() { state.pages.history = 0; renderHistory(); }
 $('history-search').addEventListener('input', filterHistory);
 $('history-filter').addEventListener('change', filterHistory);
 [1, 2, 3].forEach((step) => onClick(`step-${step}`, () => showStep(step)));
 ['delivery-back-outline', 'edit-again'].forEach((id) => onClick(id, () => showStep(2)));
+onClick('workflow-from-materials', () => openWorkflow());
+onClick('workflow-from-delivery', () => openWorkflow(true));
+$('workflow-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  run(submitWorkflow);
+});
+$('workflow-instruction').addEventListener('input', () => {
+  $('workflow-instruction').setCustomValidity('');
+  $('workflow-text-consent').checked = false;
+  $('workflow-image-consent').checked = false;
+});
 for (const pane of ['requirements', 'materials']) onClick(`show-${pane}`, () => setMaterialsPane(pane));
 onClick('more-options', () => $('requirements-dialog').showModal());
 $('requirements-form').addEventListener('submit', (event) => {
@@ -1548,9 +2049,37 @@ $('image-dialog').addEventListener('keydown', (event) => {
 $('image-dialog-img').addEventListener('error', () => { $('image-dialog-img').hidden = true; $('image-load-error').hidden = false; });
 $('image-dialog-img').addEventListener('load', () => { $('image-dialog-img').hidden = false; $('image-load-error').hidden = true; });
 $('image-dialog').addEventListener('close', () => { $('image-dialog-img').removeAttribute('src'); state.images = []; });
+// Light dismissal shares Escape's cancel handlers (including busy guards).
+function enableBackdropDismiss(dialog) {
+  if ('closedBy' in dialog) {
+    dialog.closedBy = 'any';
+    return;
+  }
+  let startedOutside = false;
+  const isBackdrop = (event) => {
+    if (event.target !== dialog) return false;
+    const { left, right, top, bottom } = dialog.getBoundingClientRect();
+    return event.clientX < left || event.clientX >= right || event.clientY < top || event.clientY >= bottom;
+  };
+  dialog.addEventListener('pointerdown', (event) => {
+    if (event.isPrimary) startedOutside = event.button === 0 && isBackdrop(event);
+  });
+  dialog.addEventListener('pointercancel', () => { startedOutside = false; });
+  dialog.addEventListener('close', () => { startedOutside = false; });
+  dialog.addEventListener('click', (event) => {
+    const dismiss = dialog.open && startedOutside && event.detail > 0 && isBackdrop(event);
+    startedOutside = false;
+    if (!dismiss) return;
+    if (typeof dialog.requestClose === 'function') dialog.requestClose();
+    else if (dialog.dispatchEvent(new Event('cancel', { cancelable: true }))) dialog.close();
+  });
+}
+document.querySelectorAll('dialog').forEach(enableBackdropDismiss);
+
 window.addEventListener('beforeunload', (event) => {
   $('api-key').value = '';
-  if (dirty() || state.operation || state.settingsBusy) { event.preventDefault(); event.returnValue = ''; }
+  $('image-api-key').value = '';
+  if (dirty() || state.operation || state.settingsBusy || state.imageSettingsBusy) { event.preventDefault(); event.returnValue = ''; }
 });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { clearTimeout(state.pollTimer); state.pollTimer = null; }

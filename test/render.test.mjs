@@ -438,7 +438,7 @@ test('preview gaps preserve original slide numbers and retain actual Office over
   const f = await fixture(t);
   const outputDir = await f.output();
   const image = await readFile(f.asset.path);
-  const qa = { completed: true, slideCount: 3, slides: [{ slide: 1, textOverflows: [{ shape: 'title' }], shapeOverflows: [{ shape: 'photo' }] }], warnings: ['实际审计警告'] };
+  const qa = { completed: true, slideCount: 3, slides: [{ slide: 1, textOverflows: [{ shape: 'title' }], shapeOverflows: [{ shape: 'photo' }], textIntersections: [{ first: '标题', second: '正文' }] }], warnings: ['实际审计警告'] };
   let officeCalls = 0;
   let exporterError;
   mockOffice(t, (command, args) => {
@@ -467,6 +467,8 @@ test('preview gaps preserve original slide numbers and retain actual Office over
   assert.ok(result.warnings.some(warning => /PNG 预览不完整：2\/3/.test(warning)));
   assert.ok(result.warnings.some(warning => /2 处文本或形状越界/.test(warning)));
   assert.ok(result.warnings.includes('实际审计警告'));
+  assert.ok(result.warnings.some(warning => /文字重叠：第 1 页/.test(warning)));
+  assert.equal(result.audit.office.verified, false);
 });
 
 test('photo-only containment and EXIF orientation preserve the aspect ratio', async t => {

@@ -115,6 +115,13 @@ test('reference prefixes are explicit and section numbering comes from source he
   assert.equal(plan.slides.filter(s => s.layout === 'reference').length, 5);
   assert.deepEqual(plan.slides.filter(s => s.layout === 'section').map(s => s.title), ['践承诺', '谋共生']);
   assert.ok(plan.slides.every(s => !s.title.startsWith('各位')));
+  const intro = '今年已保障供应覆盖100%重点客户。';
+  const withIntro = { ...job, files: job.files.map(f => ({ ...f, text: `${intro}\n${f.text}` })) };
+  const generated = basicPlan(withIntro).plan;
+  const firstContent = generated.slides.find(s => s.layout === 'content');
+  assert.equal(firstContent.title, intro.replace(/。$/, ''));
+  assert.ok(generated.slides.every(s => !s.title.endsWith('…') || s.layout !== 'content'));
+  assert.ok(firstContent.notes.includes(intro));
   const invalid = structuredClone(plan);
   invalid.slides[0].layout = 'content';
   assert.throws(() => validateReferencePrefix(invalid, requirements));

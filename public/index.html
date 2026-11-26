@@ -5,10 +5,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>启幕 PPT</title>
+  <title>泽沐PPT</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%231f2d3d'/%3E%3Cpath d='M12 14h24v4H12zm5 9h14v4H17zm5-14h4v5h-4zm0 18h4v12h-4z' fill='white'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles.css">
-  <script type="module" src="/app.js"></script>
+  <link rel="stylesheet" href="/styles.css?v=photo-glass-1">
+  <script type="module" src="/app.js?v=one-sentence-workflow-1"></script>
 </head>
 <body>
   <svg class="icon-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -38,18 +38,20 @@
   <a class="skip-link" href="#main-content">跳到主内容</a>
 
   <aside class="sidebar" aria-label="主导航">
-    <a class="brand" href="#" id="brand-home" aria-label="启幕 PPT 工作台"><span class="brand-mark" aria-hidden="true">启</span><strong>启幕 PPT</strong></a>
+    <a class="brand" href="#" id="brand-home" aria-label="泽沐PPT 工作台"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="24" height="24"><path d="M6 7h15L13 25H6z" fill="currentColor"/><path d="M23 7h3v18H15z" fill="currentColor" opacity=".55"/></svg></span><strong>泽沐PPT<small>STAGE STUDIO</small></strong></a>
     <button id="new-project" class="button button-dark sidebar-create" aria-label="新建演示" title="新建演示" data-mutation><svg class="icon"><use href="#i-plus"/></svg><span>新建演示</span></button>
     <nav class="main-nav">
       <button id="nav-workspace" class="nav-item active" aria-current="page" aria-label="创作工作台" title="创作工作台"><svg class="icon"><use href="#i-grid"/></svg><span>创作工作台</span></button>
       <button id="nav-history" class="nav-item" aria-label="项目历史" title="项目历史"><svg class="icon"><use href="#i-history"/></svg><span>项目历史</span><span id="history-count" class="nav-count">0</span></button>
-      <button id="nav-settings" class="nav-item" aria-label="模型设置" title="模型设置"><svg class="icon"><use href="#i-settings"/></svg><span>模型设置</span></button>
+      <button id="nav-studio" class="nav-item" aria-label="演示工坊" title="演示工坊"><svg class="icon"><use href="#i-spark"/></svg><span>演示工坊</span></button>
+      <button id="nav-settings" class="nav-item" type="button" aria-haspopup="dialog" aria-label="PPT 生成模型" title="PPT 生成模型"><svg class="icon"><use href="#i-settings"/></svg><span>PPT 生成模型</span></button>
+      <button id="nav-image-settings" class="nav-item" type="button" aria-haspopup="dialog" aria-label="AI 作图模型" title="AI 作图模型"><svg class="icon"><use href="#i-spark"/></svg><span>AI 作图模型</span></button>
     </nav>
   </aside>
 
   <div class="app-shell">
     <header class="topbar">
-      <strong id="view-label" class="view-label">创作工作台</strong><strong class="mobile-brand">启幕 PPT</strong>
+      <strong id="view-label" class="view-label">创作工作台</strong><strong class="mobile-brand">泽沐PPT</strong>
       <span id="service-status" class="service-status pending"><span class="status-dot"></span><span id="service-status-text">正在连接本地服务</span></span>
     </header>
 
@@ -87,7 +89,7 @@
           </div>
           <div class="materials-layout">
             <div id="materials-pane" class="materials-column">
-              <div class="section-heading"><h2>上传素材</h2><span id="file-count" class="small-tag">0 份</span></div>
+              <div class="section-heading"><h2>上传素材</h2><div class="action-buttons"><span id="file-count" class="small-tag">0 份</span><button id="studio-from-materials" class="text-button" type="button" hidden>用参考稿进入工坊</button></div></div>
               <div id="dropzone" class="dropzone" aria-disabled="true">
                 <p><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>也可以拖入文件或文件夹</p>
                 <div class="upload-actions">
@@ -127,7 +129,7 @@
               </form>
             </div>
           </div>
-          <div class="step-actionbar"><p id="analysis-hint" class="field-help">先生成提纲，再制作 PPTX。</p><div class="action-buttons"><button id="save-draft" class="button button-outline" data-mutation>保存草稿</button><button id="analyze" class="button button-dark" data-mutation><span id="analyze-label">生成提纲</span><svg class="icon"><use href="#i-arrow"/></svg></button></div></div>
+          <div class="step-actionbar"><p id="analysis-hint" class="field-help">先生成提纲，再制作 PPTX。</p><div class="action-buttons"><button id="save-draft" class="button button-outline" data-mutation>保存草稿</button><button id="analyze" class="button button-outline" data-mutation><span id="analyze-label">生成提纲</span><svg class="icon"><use href="#i-arrow"/></svg></button><button id="workflow-from-materials" class="button button-dark" type="button" aria-haspopup="dialog" data-mutation><svg class="icon"><use href="#i-spark"/></svg>一句话制作 PPT</button></div></div>
         </section>
 
         <section id="outline-step" class="step-panel" aria-label="编辑演示提纲" hidden>
@@ -158,6 +160,9 @@
         </section>
 
         <section id="delivery-step" class="step-panel" aria-label="生成结果与下载" hidden>
+          <section id="workflow-result" aria-labelledby="workflow-result-title" hidden>
+            <div class="delivery-heading"><div><h2 id="workflow-result-title"></h2><p id="workflow-result-detail" class="field-help" role="status"></p></div><div id="workflow-downloads" class="action-buttons"></div></div>
+          </section>
           <div id="delivery-empty" class="delivery-empty"><svg class="icon"><use href="#i-file"/></svg><h2 id="delivery-empty-title">还没有生成文件</h2><p id="delivery-empty-description">确认提纲并生成后，可在这里下载 PPTX 和预览每一页。</p><button id="delivery-back-outline" class="button button-outline">返回编辑提纲</button></div>
           <div id="delivery-result" hidden>
             <div class="delivery-heading"><div><h2>演示文稿已生成</h2><p id="delivery-summary" class="field-help"></p></div><div id="download-links" class="action-buttons"></div></div>
@@ -166,8 +171,9 @@
               <div class="preview-footer"><p id="preview-caption" aria-live="polite"></p><nav class="page-nav" aria-label="切换预览页"><button id="preview-prev" class="icon-button" aria-label="上一页预览" title="上一页"><svg class="icon rotate-180"><use href="#i-chevron"/></svg></button><select id="preview-jump" aria-label="跳到预览页"></select><button id="preview-next" class="icon-button" aria-label="下一页预览" title="下一页"><svg class="icon"><use href="#i-chevron"/></svg></button></nav></div>
             </div>
             <div id="preview-unavailable" class="delivery-empty" hidden><svg class="icon"><use href="#i-eye"/></svg><p>本次没有预览图，但可以正常下载 PPTX。</p><small>逐页预览需要本机安装 Microsoft PowerPoint。</small></div>
-            <div class="step-actionbar"><button id="edit-again" class="button button-small button-outline">返回修改提纲</button><button id="audit-panel" class="text-button" aria-haspopup="dialog" hidden>生成详情</button></div>
+            <div class="step-actionbar"><button id="edit-again" class="button button-small button-outline">返回修改提纲</button><div class="action-buttons"><button id="audit-panel" class="text-button" aria-haspopup="dialog" hidden>生成详情</button><button id="studio-from-output" class="button button-small button-outline" type="button">在工坊打开成稿</button></div></div>
           </div>
+          <div class="step-actionbar"><button id="workflow-from-delivery" class="button button-outline" type="button" aria-haspopup="dialog" data-mutation><svg class="icon"><use href="#i-spark"/></svg>用一句话继续调整</button></div>
         </section>
       </section>
 
@@ -183,8 +189,57 @@
           <nav id="history-pager" class="list-pager" aria-label="历史翻页"><button id="history-prev" class="button button-small button-outline">上一批</button><span id="history-range" aria-live="polite"></span><button id="history-next" class="button button-small button-outline">下一批</button></nav>
         </div>
       </section>
+      <section id="studio-view" class="app-view" aria-labelledby="studio-title" hidden>
+        <div class="project-bar"><div class="project-meta"><strong id="studio-title" tabindex="-1">演示工坊</strong><span id="studio-project"></span></div><button id="studio-image-settings" class="button button-outline button-small" type="button" aria-haspopup="dialog">作图设置</button></div>
+        <div class="step-panel studio-panel">
+          <p class="field-help">直接使用已上传的参考 PPTX，无需生成提纲或成稿。也可以处理已生成的成稿。工坊会导出新文件，不覆盖原稿。</p>
+          <div class="studio-source-row">
+            <div class="form-field"><label for="studio-source">源文稿</label><select id="studio-source" aria-describedby="studio-source-help" disabled></select></div>
+            <button id="studio-load" class="button button-outline" type="button" disabled>读取页面</button>
+          </div>
+          <p id="studio-source-help" class="field-help"></p>
+          <button id="studio-go-materials" class="text-button" type="button" hidden>前往上传素材</button>
+          <div id="studio-controls" hidden>
+            <fieldset id="studio-inputs" class="plain-fieldset">
+              <div class="form-field"><label for="studio-mode">要制作的版本</label><select id="studio-mode"><option value="show">逐步放映版（本机动画）</option><option value="remix">AI 视觉重制版（整页图片）</option></select></div>
+              <div id="studio-show-options" class="studio-options">
+                <p class="field-help">给适合的页面添加按点击逐步出现的动画，保留原稿对象的可编辑性。已有动画、隐藏页及自动换页会跳过。此操作不调用 AI。</p>
+                <div class="form-row"><div class="form-field"><label for="studio-style">动画样式</label><select id="studio-style"><option value="guided">引导式展开</option><option value="fade">统一淡入</option></select></div><div class="form-field"><label for="studio-pace">动画节奏</label><select id="studio-pace"><option value="normal">正常</option><option value="fast">快速</option></select></div></div>
+              </div>
+              <div id="studio-remix-options" class="studio-options" hidden>
+                <div class="consent-panel"><p><strong>选中的重制页会被替换成整页图片。</strong> 这些页的文字、图表和形状将不能单独编辑。AI 可能改错文字或数字，正式使用前请逐页核对。</p><p id="studio-endpoint"></p></div>
+                <div id="studio-reference-field" class="form-field"><label for="studio-reference">视觉参考图</label><select id="studio-reference"><option value="">使用重制页的页面图</option></select><p class="field-help">可在「素材」先上传图片，再从这里选作背景、色彩或构图参考。选择后，不再发送重制页截图，仍发送原页文字。</p></div>
+                <div class="form-field"><label for="studio-prompt-template">提示词模板和收藏</label><select id="studio-prompt-template"></select><button id="studio-prompt-apply" class="button button-outline" type="button">套用到编辑框</button></div>
+                <div class="form-field"><label for="studio-instructions">视觉提示词（选填，可自由编辑）</label><textarea id="studio-instructions" rows="4" maxlength="1200" placeholder="例如：沿用参考图的深蓝配色，保留原标题和数字，把主体放右侧，左侧留白给标题。"></textarea></div>
+                <div class="form-field"><label for="studio-prompt-name">收藏名称</label><input id="studio-prompt-name" maxlength="60" placeholder="例如：我的年度汇报风格"><button id="studio-prompt-save" class="button button-outline" type="button">收藏当前提示词</button><p id="studio-prompt-status" class="field-help" role="status">收藏保存在当前浏览器。</p></div>
+              </div>
+              <fieldset class="plain-fieldset studio-page-field"><legend id="studio-page-legend">页面选择</legend><p id="studio-selection" class="field-help" aria-live="polite"></p><ul id="studio-pages" aria-labelledby="studio-page-legend"></ul></fieldset>
+              <label id="studio-consent-label" class="checkbox-label consent-panel" hidden><input id="studio-consent" type="checkbox"><span>我有权发送上述材料，并同意本次调用作图接口（可能计费）。</span></label>
+              <div class="action-buttons studio-actions"><button id="studio-export" class="button button-dark" type="button" disabled>导出逐步放映版</button></div>
+            </fieldset>
+          </div>
+          <p id="studio-status" class="studio-feedback" role="status" hidden></p>
+          <section id="studio-results" aria-labelledby="studio-results-title" hidden><h2 id="studio-results-title">本次会话的导出成果</h2><ul id="studio-downloads"></ul></section>
+        </div>
+      </section>
     </main>
   </div>
+
+  <dialog id="workflow-dialog" class="modal wide-modal" aria-labelledby="workflow-title">
+    <div class="modal-header"><h2 id="workflow-title">一句话制作 PPT</h2><button type="button" class="icon-button" data-close-dialog aria-label="关闭一句话制作"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <div class="modal-body">
+      <form id="workflow-form">
+        <fieldset id="workflow-fields" class="plain-fieldset" disabled>
+          <div class="form-field"><label for="workflow-instruction">你想制作或调整什么？</label><textarea id="workflow-instruction" rows="3" maxlength="1200" aria-describedby="workflow-help" required></textarea><p id="workflow-help" class="field-help"></p></div>
+          <div class="consent-panel dialog-field">
+            <label class="checkbox-label"><input id="workflow-text-consent" type="checkbox" required><span>我有权发送项目素材，并同意本次向已配置的文字模型发送指令与相关文本。</span></label>
+            <label class="checkbox-label"><input id="workflow-image-consent" type="checkbox"><span>同意按指令调用作图模型（选填，可能发送页面文字和图像并产生费用）。重绘页将以整页图片交付，请核对文字和数字。</span></label>
+          </div>
+        </fieldset>
+      </form>
+    </div>
+    <div class="modal-footer split-footer"><p id="workflow-form-error" class="field-error" role="alert" hidden></p><button id="workflow-submit" class="button button-dark" type="submit" form="workflow-form" data-mutation>运行一句话工作流</button></div>
+  </dialog>
 
   <dialog id="requirements-dialog" class="modal wide-modal" aria-labelledby="requirements-title">
     <div class="modal-header"><h2 id="requirements-title">更多选项</h2><button type="button" class="icon-button" data-close-dialog aria-label="关闭更多选项"><svg class="icon"><use href="#i-close"/></svg></button></div>
@@ -225,9 +280,9 @@
   </dialog>
 
   <dialog id="settings-dialog" class="modal wide-modal" aria-labelledby="settings-title">
-    <div class="modal-header"><h2 id="settings-title">模型设置</h2><button id="close-settings" class="icon-button" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <div class="modal-header"><h2 id="settings-title">PPT 生成模型设置</h2><button id="close-settings" class="icon-button" aria-label="关闭"><svg class="icon"><use href="#i-close"/></svg></button></div>
     <div class="modal-body settings-body">
-      <p class="field-help">本机基础分析不用配置；AI 分析使用你的 OpenAI 兼容 API。</p>
+      <p class="field-help">只用于 PPT 的 AI 提纲编排，不用于作图。本机基础分析无需配置。</p>
       <form id="settings-form" novalidate><fieldset id="settings-fields" class="plain-fieldset">
         <div class="form-field"><label for="api-base-url">API 地址</label><input id="api-base-url" type="url" placeholder="填写服务提供的 API 地址" autocomplete="off"></div>
         <div class="form-field"><label for="api-model">模型名称</label><input id="api-model" type="text" placeholder="填写服务提供的模型 ID" autocomplete="off"></div>
@@ -239,6 +294,47 @@
       <div id="settings-feedback" class="settings-feedback" hidden><p id="settings-feedback-text" role="status"></p><button id="read-settings-feedback" class="text-button">详情</button></div>
     </div>
     <div class="modal-footer split-footer"><button id="test-api" class="button button-outline" type="button">测试连接</button><button id="save-settings" class="button button-dark" type="submit" form="settings-form">保存设置</button></div>
+  </dialog>
+
+  <dialog id="image-settings-dialog" class="modal wide-modal" aria-labelledby="image-settings-title">
+    <div class="modal-header"><h2 id="image-settings-title">作图模型设置</h2><button id="close-image-settings" class="icon-button" type="button" aria-label="关闭作图设置"><svg class="icon"><use href="#i-close"/></svg></button></div>
+    <div class="modal-body settings-body">
+      <p class="field-help">只用于演示工坊的 AI 视觉重制，与文字模型分开保存。保存不会测试接口或发送素材。</p>
+      <form id="image-settings-form"><fieldset id="image-settings-fields" class="plain-fieldset">
+        <div class="form-field"><label for="image-base-url">API 地址</label><input id="image-base-url" type="url" placeholder="例如 https://api.example.com/v1" autocomplete="off"></div>
+        <div class="form-field">
+          <label for="image-model">作图模型</label>
+          <select id="image-model" required aria-describedby="image-model-current">
+            <option value="" disabled selected>请选择作图模型</option>
+            <option value="gpt-image-2">gpt-image-2</option>
+            <option value="gpt-image-2-2k">gpt-image-2-2k</option>
+            <option value="gpt-image-2-4k">gpt-image-2-4k</option>
+            <option value="gpt-image-2.5">gpt-image-2.5</option>
+            <option value="gpt-image-2.5-flare">gpt-image-2.5-flare</option>
+            <option value="gpt-image-2.5-flare-2k">gpt-image-2.5-flare-2k</option>
+            <option value="gpt-image-2.5-flare-4k">gpt-image-2.5-flare-4k</option>
+            <option value="gpt-image-2.5-sunburst">gpt-image-2.5-sunburst</option>
+            <option value="gpt-image-2.5-sunburst-2k">gpt-image-2.5-sunburst-2k</option>
+            <option value="gpt-image-2.5-sunburst-4k">gpt-image-2.5-sunburst-4k</option>
+            <option value="gpt-image-2.6">gpt-image-2.6</option>
+            <option value="gpt-image-2.6-flare">gpt-image-2.6-flare</option>
+            <option value="gpt-image-2.6-flare-2k">gpt-image-2.6-flare-2k</option>
+            <option value="gpt-image-2.6-flare-4k">gpt-image-2.6-flare-4k</option>
+            <option value="gpt-image-2.6-sunburst">gpt-image-2.6-sunburst</option>
+            <option value="gpt-image-2.6-sunburst-2k">gpt-image-2.6-sunburst-2k</option>
+            <option value="gpt-image-2.6-sunburst-4k">gpt-image-2.6-sunburst-4k</option>
+          </select>
+          <p id="image-model-current" class="field-help" hidden></p>
+        </div>
+        <div class="form-field"><label for="image-method">作图输入方式</label><select id="image-method"><option value="edits">参考图＋提示词（推荐）</option><option value="generations">仅文字提示词（无参考图）</option></select><p class="field-help">参考图模式调用 /images/edits；仅文字模式调用 /images/generations，不发送图像文件。</p></div>
+        <div class="form-row"><div class="form-field"><label for="image-size">图片尺寸</label><select id="image-size"><option value="auto">自动</option><option value="1536x1024">横向 · 1536 × 1024</option><option value="1024x1536">纵向 · 1024 × 1536</option><option value="1024x1024">方形 · 1024 × 1024</option></select></div><div class="form-field"><label for="image-quality">图像质量</label><select id="image-quality"><option value="auto">自动</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></div></div>
+        <div class="form-field"><div class="label-row"><label for="image-api-key">API Key</label><span id="image-key-state" class="field-help"></span></div><input id="image-api-key" type="password" maxlength="4096" placeholder="留空不设置新密钥" autocomplete="new-password" spellcheck="false"></div>
+        <p class="field-help">保持原地址时，留空会保留已存密钥；更换地址会清除旧密钥，除非你同时填写新密钥。</p>
+        <div class="settings-checks"><label class="checkbox-label"><input id="image-clear-key" type="checkbox">移除已存密钥</label><label class="checkbox-label"><input id="image-allow-local" type="checkbox">允许受信任的本地 HTTP API</label></div>
+      </fieldset></form>
+      <p id="image-settings-feedback" class="studio-feedback" role="status" hidden></p>
+    </div>
+    <div class="modal-footer split-footer"><button id="test-image-api" class="button button-outline" type="button">测试作图连接</button><button id="save-image-settings" class="button button-dark" type="submit" form="image-settings-form">保存作图设置</button></div>
   </dialog>
 
   <dialog id="reader-dialog" class="modal wide-modal reader-dialog" aria-labelledby="reader-title">

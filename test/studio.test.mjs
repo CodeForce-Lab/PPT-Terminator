@@ -1,0 +1,127 @@
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import { test } from 'node:test';
+import PptxGenJS from 'pptxgenjs';
+import sharp from 'sharp';
+import { createApp } from '../server.mjs';
+import { openDeck, inspectShapes } from '../lib/pptx-deck.mjs';
+
+async function listen(server, t) {
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+test('text and image settings persist separately and use their own provider, model, and key', async t => {
+  const testRoot = path.join(import.meta.dirname, '..', 'data');
+  await fs.mkdir(testRoot, { recursive: true });
+  const dataDir = await fs.mkdtemp(path.join(testRoot, 'settings-test-'));
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const sample = await sharp({create:{width:64,height:64,channels:3,background:'#163042'}}).png().toBuffer();
+  const provider = async response => {
+    const requests = [];
+    const url = await listen(http.createServer(async (req, res) => {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      requests.push([req.url, JSON.parse(Buffer.concat(chunks)).model, req.headers.authorization]);
+      res.end(JSON.stringify(response));
+    }), t);
+    return { url: url + '/v1', requests };
+  };
+  const text = await provider({ choices: [{ message: { content: 'OK' } }] });
+  const image = await provider({ data: [{ b64_json: sample.toString('base64') }] });
+  const start = async () => listen(http.createServer(await createApp({ dataDir })), t);
+  const send = async (base, route, method = 'GET', body) => {
+    const response = await fetch(base + '/api/settings' + route, { method, ...(body ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}) });
+    const result = await response.json();
+    assert.ok(response.ok, JSON.stringify(result));
+    return result;
+  };
+  const first = await start();
+  await send(first, '', 'PUT', { baseUrl: text.url, model: 'text-model', apiKey: 'text-test-key', allowLocalApi: true });
+  const saved = await send(first, '/image', 'PUT', { baseUrl: image.url, model: 'image-model', apiKey: 'image-test-key', method: 'generations', allowLocalApi: true });
+  assert.equal(saved.model, 'text-model');
+  assert.equal(saved.image.model, 'image-model');
+  assert.doesNotMatch(JSON.stringify(saved), /test-key|encryptedKey/);
+  const restarted = await start();
+  await send(restarted, '/test', 'POST', {});
+  await send(restarted, '/image/test', 'POST', { consent: true });
+  assert.deepEqual(text.requests, [['/v1/chat/completions', 'text-model', 'Bearer text-test-key']]);
+  assert.deepEqual(image.requests, [['/v1/images/generations', 'image-model', 'Bearer image-test-key']]);
+  const cleared = await send(restarted, '', 'PUT', { clearApiKey: true });
+  assert.equal(cleared.hasApiKey, false);
+  assert.equal(cleared.image.hasApiKey, true);
+});
+
+test('visual studio: native click groups, selected image replacement, consent, and unchanged source', async t => {
+  const testRoot = path.join(import.meta.dirname, '..', 'data');
+  await fs.mkdir(testRoot, { recursive: true });
+  const dataDir = await fs.mkdtemp(path.join(testRoot, 'studio-test-'));
+  t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+  const sample = await sharp({create:{width:160,height:90,channels:3,background:'#163042'}}).png().toBuffer();
+  const captured = [];
+  const gateway = await listen(http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    captured.push({url:req.url,body:Buffer.concat(chunks).toString('utf8'),type:req.headers['content-type']});
+    res.setHeader('Content-Type','application/json');
+    res.end(JSON.stringify({data:[{b64_json:sample.toString('base64')}]}));
+  }),t);
+  const app = await createApp({dataDir});
+  const base = await listen(http.createServer(app),t);
+  const call = (route, method='GET', value) => fetch(base+route, {method,...(value instanceof FormData ? {body:value} : value == null ? {} : {headers:{'Content-Type':'application/json'},body:JSON.stringify(value)})});
+  const json = async (...args) => {const r = await call(...args); const b = await r.json(); assert.ok(r.ok,JSON.stringify(b)); return b;};
+  const p = new PptxGenJS(); p.layout = 'LAYOUT_WIDE';
+  const slide = p.addSlide();
+  slide.addText('标题', {x:1,y:1,w:8,h:.5});
+  slide.addText('指标 42%', {x:1,y:3,w:4,h:.45});
+  slide.addText('第二组说明', {x:7,y:3,w:4,h:.45});
+  p.addSlide().addImage({data:'image/png;base64,'+sample.toString('base64'),x:0,y:0,w:13.333333,h:7.5});
+  const original = Buffer.from(await p.write({outputType:'nodebuffer'}));
+  const job = await json('/api/jobs','POST',{title:'visual test'});
+  const route = `/api/jobs/${job.id}`;
+  const form = new FormData(); form.append('files',new Blob([original]),'sample.pptx');
+  form.append('files',new Blob([sample]),'background.png');
+  const uploaded = await json(route+'/files','POST',form);
+  const referenceImageId = uploaded.files.find(file => file.kind === 'image').id;
+  const source = uploaded.files[0].id;
+  const studio = route+'/studio';
+  assert.equal((await json(studio+'/deck?source='+source)).pages.length,2);
+  const show = await json(studio+'/show','POST',{source,excluded:[2],style:'guided'});
+  assert.deepEqual(show.audit.animatedPages,[1]);
+  assert.equal(show.audit.clickGroups,2);
+  const download = async url => {const r = await call(url); assert.ok(r.ok); return openDeck(Buffer.from(await r.arrayBuffer()));};
+  const sourceDeck = openDeck(original);
+  const animated = await download(show.url);
+  assert.equal(animated.slides[0].hasTiming,true);
+  assert.equal(animated.slides[0].xml.replace(/<p:timing xmlns:p=.*?<\/p:timing>/s,''),sourceDeck.slides[0].xml);
+  assert.equal(animated.slides[1].xml,sourceDeck.slides[1].xml);
+  await json('/api/settings/image','PUT',{baseUrl:gateway+'/v1',model:'gpt-image-mock',method:'generations',allowLocalApi:true});
+  assert.equal((await call(studio+'/remix','POST',{source,pages:[1]})).status,403);
+  assert.equal(captured.length,0);
+  assert.equal((await call(studio+'/remix','POST',{source,pages:[1,1],consent:true})).status,400);
+  const remix = await json(studio+'/remix','POST',{source,pages:[1],stylePages:[2],consent:true});
+  const remixed = await download(remix.url);
+  assert.equal(remixed.slides[1].xml,sourceDeck.slides[1].xml);
+  assert.deepEqual(inspectShapes(remixed.slides[0]).map(s=>s.kind),['picture']);
+  assert.match(JSON.parse(captured[0].body).prompt,/指标 42%/);
+  assert.equal(captured[0].url,'/v1/images/generations');
+  await json('/api/settings/image','PUT',{method:'edits'});
+  const second = await json(studio+'/remix','POST',{source,pages:[2],consent:true});
+  assert.equal((await download(second.url)).slides[0].xml,sourceDeck.slides[0].xml);
+  assert.equal(captured[1].url,'/v1/images/edits');
+  assert.match(captured[1].type,/multipart\/form-data/);
+  assert.match(captured[1].body,/filename="reference-1.jpg"/);
+  assert.equal((await call(studio+'/remix','POST',{source,pages:[1],referenceImageId:'unknown',consent:true})).status,400);
+  const withBackground = await json(studio+'/remix','POST',{source,pages:[1],referenceImageId,instructions:'左侧留出标题区',consent:true});
+  assert.equal((await download(withBackground.url)).slides[1].xml,sourceDeck.slides[1].xml);
+  assert.equal(captured[2].url,'/v1/images/edits');
+  assert.match(captured[2].body,/filename="reference-1.jpg"/);
+  assert.match(captured[2].body,/左侧留出标题区/);
+  assert.match(captured[2].body,/指标 42%/);
+  assert.equal((await json(studio+'/show','POST',{source,excluded:[2]})).audit.clickGroups,2);
+});
