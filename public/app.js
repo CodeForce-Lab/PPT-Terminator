@@ -308,7 +308,7 @@ function syncControls() {
 }
 function updateSaveState() {
   const job = currentJob();
-  $('project-name').textContent = state.plan?.title || $('topic').value || job?.title || '新建演示文稿';
+  $('project-name').textContent = $('project-name').title = state.plan?.title || $('topic').value || job?.title || '新建演示文稿';
   $('save-status').textContent = dirty() ? '有未保存的编辑 · 仅在当前页面内存中' : job ? `已保存到本机 · ${dateLabel(job.updatedAt)}` : '尚未创建项目 · 仅在本机创作';
   $('outline-save-state').textContent = state.plan && planStructureChanged() ? '页面 / 参考设置已变更 · 保存前需确认重新编排' : dirty() ? '编辑尚未保存' : state.plan ? '当前提纲已保存到本机' : '尚无提纲';
   $('outline-save-state').classList.toggle('dirty', dirty());
